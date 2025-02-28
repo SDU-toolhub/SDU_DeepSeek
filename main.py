@@ -2,6 +2,7 @@ from fastapi import FastAPI
 import sduwrap
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import json
 import uuid
@@ -9,6 +10,14 @@ import time
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 根据需求调整允许的源
+    allow_credentials=True,
+    allow_methods=["POST", "OPTIONS"],  # 明确允许 OPTIONS 和 POST
+    allow_headers=["*"],  # 允许所有头
+)
 
 # 假设这是用户已有的生成器函数（需自行实现具体逻辑）
 def chat(content: str, history: list) -> str:
@@ -26,6 +35,11 @@ def chat(content: str, history: list) -> str:
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completion(request: Request):
+    # 如果是OPTIONS请求，响应使用POST方法
+    if request.method == "OPTIONS":
+        return {"methods": ["POST"]}
+
+
     # 解析请求体
     try:
         body = await request.json()
@@ -122,4 +136,4 @@ if __name__ == "__main__":
         with open("./cookies.json", "w") as f:
             json.dump(cookies, f)
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
