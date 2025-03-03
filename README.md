@@ -14,7 +14,7 @@
 ```bash
 git clone https://github.com/zeroHYH/SDU_DeepSeek
 cd SDU_DeepSeek
-pip install requests toml rich getpass httpx
+pip install requests toml rich httpx
 python sduDeepSeekInTerminal.py
 ```
 

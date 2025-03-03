@@ -20,6 +20,7 @@ else:
     configs = login(sduid, password, fingerprint)
     configs["online"] = False
     configs["reason"] = True
+    cookies = configs["cookies"]
 
 commands = {"exit": {"message": "Goodbye!", "exec": ""},
             "clear": {"message": "History cleared.",
