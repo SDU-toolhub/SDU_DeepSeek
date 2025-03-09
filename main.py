@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 import sduwrap
+from sduwrap import ChatConfig
+
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
 import uvicorn
@@ -7,11 +9,11 @@ import json
 import uuid
 import time
 
-
 app = FastAPI()
 
+
 # 假设这是用户已有的生成器函数（需自行实现具体逻辑）
-def chat(content: str, history: list) -> str:
+def chat(content: str, history: list, config: ChatConfig) -> str:
     request_history = []
     for chat_session in history:
         cs = sduwrap.ChatSession()
@@ -20,9 +22,9 @@ def chat(content: str, history: list) -> str:
 
         request_history.append(cs)
 
-
-    for response in sduwrap.chat(content, request_history,sduwrap.ChatConfig()):
+    for response in sduwrap.chat(content, request_history, config):
         yield response
+
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completion(request: Request):
@@ -35,7 +37,23 @@ async def openai_chat_completion(request: Request):
     # 提取必要参数
     messages = body.get("messages", [])
     stream = body.get("stream", False)
-    model = body.get("model", "deepseek")  # 模型名称按需处理
+    model = body.get("model", "deepseek_reasoner_web")  # 模型名称按需处理
+
+    config = ChatConfig()
+
+    model_config = {
+        "deepseek_reasoner_web": (73, "本科生", 1, 1),
+        "deepseek_reasoner": (73, "本科生", 1, 2),
+        "deepseek_web": (73, "本科生", 2, 1),
+        "deepseek": (73, "本科生", 2, 2),
+        "QwQ": (72, "本科生", 2, 2),
+        "QwQ_web": (72, "本科生", 2, 1),
+        "QwQ_reasoner": (72, "本科生", 1, 2),
+        "QwQ_reasoner_web": (72, "本科生", 1, 1),
+    }
+
+    if model in model_config:
+        config.compose_id, config.auth_tag, config.deep_search, config.internet_search = model_config[model]
 
     # 校验消息格式
     if not messages or messages[-1]["role"] != "user":
@@ -53,7 +71,7 @@ async def openai_chat_completion(request: Request):
             created = int(time.time())
 
             # 遍历生成器生成事件流
-            for chunk in chat(current_input, history):
+            for chunk in chat(current_input, history, config):
                 event_data = {
                     "id": response_id,
                     "object": "chat.completion.chunk",
@@ -111,9 +129,16 @@ if __name__ == "__main__":
             if not sduwrap.cookies:
                 raise FileNotFoundError
     except FileNotFoundError:
-        import login
+        import sdu_aiassist_login as login
 
-        cookies = login.login()
+        print("There is no cookies.json file, logging in...")
+        sdu_id = input("Please enter your SDU ID: ")
+        password = input("Please enter your password: ")
+        fingerprint = input("Please enter your fingerprint(Any String For Generate Random UUID): ")
+
+        fingerprint = str(uuid.uuid5(uuid.NAMESPACE_URL, fingerprint))
+
+        cookies = login.login(sdu_id, password, fingerprint)["cookies"]
         if not cookies:
             raise Exception("Login failed")
 

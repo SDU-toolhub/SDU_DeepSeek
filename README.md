@@ -8,6 +8,8 @@
 
 感谢山东大学数智化支撑研究院（信息办）为山大学子提供的免费DeepSeek服务。
 
+感谢@zeroHYH同学为本程序提供山大统一身份认证的登录支持，使得免于使用网页填表。
+
 # 程序开发宗旨
 
 本程序的目的是为了方便使用DeepSeek的同学，提供一个简单的API接口，方便调用。
@@ -28,7 +30,7 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ```
 
-第一次启动程序时，会弹出统一身份认证的登录页面，登录后会自动保存登录状态（程序所在的目录下会生成cookies.json），下次启动程序时会自动登录。
+第一次启动程序时，会要求输入学号和密码（用于统一身份认证的），登录后会自动保存登录状态（程序所在的目录下会生成cookies.json），下次启动程序时会自动登录。
 
 如果长时间未使用，登录状态可能会过期，此时请手动删除cookies.json文件，然后重新启动程序。
 
@@ -36,7 +38,15 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 
 API路径为 /v1/chat/completions，程序不验证密钥，由于原版网页限制，也无法调整参数，因此请直接使用默认参数。
 
-默认支持深度思考和联网搜索
+支持以下模型，请在调用工具处填写（严格大小写，如果输入不匹配则默认为DeepSeek+深度思考+联网搜索）：
+- deepseek_reasoner_web (DeepSeek+深度思考+联网搜索)
+- deepseek_reasoner (DeepSeek+深度思考)
+- deepseek_web (DeepSeek+联网搜索)
+- deepseek (DeepSeek)
+- QwQ (QwQ)
+- QwQ_web (QwQ+联网搜索)
+- QwQ_reasoner (QwQ+深度思考)
+- QwQ_reasoner_web (QwQ+深度思考+联网搜索)
 
 ## 从源码运行
 
