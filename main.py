@@ -105,7 +105,7 @@ async def openai_chat_completion(request: Request):
     else:
         # 收集完整响应
         full_response = "".join([
-            chunk for chunk in chat(current_input, history)
+            chunk for chunk in chat(current_input, history, config)
         ])
 
         return {
