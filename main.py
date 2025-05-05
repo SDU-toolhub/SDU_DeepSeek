@@ -138,12 +138,22 @@ if __name__ == "__main__":
                 raise FileNotFoundError
     except FileNotFoundError:
         import sdu_aiassist_login as login
-
+        import getpass
         print("There is no cookies.json file, logging in...")
         sdu_id = input("Please enter your SDU ID: ")
-        password = input("Please enter your password: ")
-        fingerprint = input("Please enter your fingerprint(Any String For Generate Random UUID): ")
-
+        password = getpass.getpass("Please enter your password: ")
+        # fingerprint = input("Please enter your fingerprint(Any String For Generate Random UUID): ")
+        # try read fingerprint from file
+        try:
+            with open("./fingerprint.txt", "r") as f:
+                fingerprint = f.read().strip()
+        except FileNotFoundError:
+            # generate random uuid
+            fingerprint = input("Please enter your fingerprint(Empty to generate one): ")
+            if not fingerprint:
+                fingerprint = str(uuid.uuid4())
+            with open("./fingerprint.txt", "w") as f:
+                f.write(fingerprint)
         fingerprint = str(uuid.uuid5(uuid.NAMESPACE_URL, fingerprint))
 
         cookies = login.login(sdu_id, password, fingerprint)["cookies"]
