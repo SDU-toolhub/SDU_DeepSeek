@@ -4,39 +4,67 @@ import uuid
 import sdu_aiassist_login as login
 import time
 
+print("Please confirm that you have successfully logged in and then leave this program running.")
+print("It will automatically refresh the cookies every 24 hours.")
+print("Press Ctrl+C to exit.")
+
 while True:
-    print("Please confirm that you have successfully logged in and then leave this program running.")
-    with open("./userinfo.csv", "r") as f:
-        sdu_id, password = f.read().strip().split(",")
-    if not sdu_id or not password:
-        exit(1)
-    # fingerprint = input("Please enter your fingerprint(Any String For Generate Random UUID): ")
-    # try read fingerprint from file
     try:
-        with open("./fingerprint.txt", "r") as f:
-            fingerprint = f.read().strip()
-    except FileNotFoundError:
-        # generate random uuid
-        fingerprint = input("Please enter your fingerprint(Empty to generate one): ")
-        if not fingerprint:
+        # 从CSV文件读取用户信息
+        with open("./userinfo.csv", "r", encoding="utf-8") as f:
+            a = f.read().strip().split(",")
+        sdu_id = a[0].strip()
+        password = a[1]
+        
+        if not sdu_id or not password:
+            print("用户凭据为空，退出程序")
+            exit(1)
+        
+        # 读取设备指纹
+        try:
+            with open("./fingerprint.txt", "r") as f:
+                fingerprint = f.read().strip()
+        except FileNotFoundError:
             fingerprint = str(uuid.uuid4())
-        with open("./fingerprint.txt", "w") as f:
-            f.write(fingerprint)
-    fingerprint = str(uuid.uuid5(uuid.NAMESPACE_URL, fingerprint))
-
-    cookies = login.login(sdu_id, password, fingerprint)["cookies"]
-    if not cookies:
-        raise Exception("Login failed")
-
-    with open("./cookies.json", "w") as f:
-        json.dump(cookies, f)
-
-    print("Login successful, cookies saved to ./cookies.json")
-    print("You can now leave this program running.")
-    print("It will automatically refresh the cookies every 24 hours.")
-    print("Press Ctrl+C to exit.")
-
-    
-    time.sleep(24 * 60 * 60)  # Sleep for 24 hours
-
-    # If you want to exit the loop, you can use a keyboard interrupt (Ctrl+C)
+            with open("./fingerprint.txt", "w") as f:
+                f.write(fingerprint)
+            print(f"生成新的设备指纹: {fingerprint}")
+        
+        # 尝试登录
+        try:
+            login_result = login.attempt_login_without_code(sdu_id, password, fingerprint)
+            cookies = login_result["cookies"]
+        except login.VerificationCodeRequiredException as e:
+            print("需要验证码，请输入手机收到的验证码:")
+            code = input("验证码: ")
+            login_result = login.continue_login_with_code(e.login_state, code)
+            cookies = login_result["cookies"]
+        except Exception as e:
+            print(f"登录失败: {e}")
+            print("等待5分钟后重试...")
+            time.sleep(5 * 60)
+            continue
+        
+        if not cookies:
+            print("登录失败，cookies为空")
+            print("等待5分钟后重试...")
+            time.sleep(5 * 60)
+            continue
+        
+        # 保存cookies
+        with open("./cookies.json", "w") as f:
+            json.dump(cookies, f)
+        
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        print(f"[{current_time}] 登录成功，cookies已刷新并保存到 ./cookies.json")
+        
+        # 等待24小时后再次刷新
+        time.sleep(24 * 60 * 60)
+        
+    except KeyboardInterrupt:
+        print("\n程序已停止")
+        break
+    except Exception as e:
+        print(f"发生错误: {e}")
+        print("等待5分钟后重试...")
+        time.sleep(5 * 60)
