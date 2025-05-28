@@ -1,7 +1,6 @@
 import requests
 import json
 
-from PIL.ImageChops import offset
 
 cookies = {}
 
