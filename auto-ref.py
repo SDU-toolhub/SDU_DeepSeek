@@ -5,7 +5,7 @@ import sdu_aiassist_login as login
 import time
 
 print("Please confirm that you have successfully logged in and then leave this program running.")
-print("It will automatically refresh the cookies every 24 hours.")
+print("It will automatically refresh the cookies every 6 hours.")
 print("Press Ctrl+C to exit.")
 
 while True:
@@ -58,8 +58,8 @@ while True:
         current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         print(f"[{current_time}] 登录成功，cookies已刷新并保存到 ./cookies.json")
         
-        # 等待24小时后再次刷新
-        time.sleep(24 * 60 * 60)
+        # 等待6小时后再次刷新
+        time.sleep(6 * 60 * 60)
         
     except KeyboardInterrupt:
         print("\n程序已停止")
