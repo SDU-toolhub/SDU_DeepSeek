@@ -35,10 +35,9 @@ while True:
             login_result = login.attempt_login_without_code(sdu_id, password, fingerprint)
             cookies = login_result["cookies"]
         except login.VerificationCodeRequiredException as e:
-            print("需要验证码，请输入手机收到的验证码:")
-            code = input("验证码: ")
-            login_result = login.continue_login_with_code(e.login_state, code)
-            cookies = login_result["cookies"]
+            print("需要验证码，请在api端输入验证码")
+            time.sleep(20 * 60)
+            continue
         except Exception as e:
             print(f"登录失败: {e}")
             print("等待5分钟后重试...")
