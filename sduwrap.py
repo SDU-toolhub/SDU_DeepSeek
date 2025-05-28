@@ -2,8 +2,6 @@ import requests
 import json
 
 
-cookies = {}
-
 url = "https://aiassist.sdu.edu.cn/site/ai/compose_chat"
 
 
@@ -57,7 +55,8 @@ def make_chat_request(content, history, config):
 def chat(content, history, config):
     form_data = make_chat_request(content, history, config)
     # response = requests.post(url, data=form_data, cookies=cookies,verify=False)
-
+    with open("./cookies.json", "r") as f:
+        cookies = json.load(f)
     # 流式输出
     response = requests.post(url, data=form_data, cookies=cookies, stream=True, verify=False)  # 防止开了代理没法用
 
