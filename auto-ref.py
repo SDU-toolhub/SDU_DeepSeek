@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python3
 import json
 import uuid
 import sdu_aiassist_login as login
