@@ -9,6 +9,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import queue
 import threading
+import os
 import sduwrap
 from sduwrap import ChatConfig
 from fastchat.protocol.openai_api_protocol import (
@@ -24,13 +25,132 @@ from fastchat.protocol.openai_api_protocol import (
     ModelCard,
 )
 
-try:
-    with open("./cookies.json", "r") as f:
-        sduwrap.cookies = json.load(f)
-        if not sduwrap.cookies:
-            raise FileNotFoundError
-except FileNotFoundError:
-    print("Warning: No cookies.json found. Please login first.")
+COOKIES_FILE = "./cookies.json"
+CREDENTIALS_FILE = "./credentials.json"
+
+token_stats = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "requests": 0,
+}
+stats_lock = threading.Lock()
+
+
+def load_cookies():
+    global sduwrap
+    try:
+        with open(COOKIES_FILE, "r") as f:
+            sduwrap.cookies = json.load(f)
+            if not sduwrap.cookies:
+                raise FileNotFoundError
+        print("[Cookies] Loaded from file")
+        return True
+    except FileNotFoundError:
+        print("[Cookies] No cookies.json found")
+        return False
+
+
+def save_cookies():
+    with open(COOKIES_FILE, "w") as f:
+        json.dump(sduwrap.cookies, f)
+    print("[Cookies] Saved to file")
+
+
+def load_credentials():
+    try:
+        with open(CREDENTIALS_FILE, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+
+def save_credentials(sdu_id: str, password: str, fingerprint: str = None):
+    with open(CREDENTIALS_FILE, "w") as f:
+        json.dump({
+            "sdu_id": sdu_id,
+            "password": password,
+            "fingerprint": fingerprint
+        }, f)
+    print("[Credentials] Saved to file")
+
+
+def login(sdu_id: str = None, password: str = None, fingerprint: str = None):
+    import sdu_aiassist_login as login_module
+    import getpass
+    
+    if not sdu_id or not password:
+        creds = load_credentials()
+        if creds:
+            sdu_id = creds.get("sdu_id")
+            password = creds.get("password")
+            fingerprint = creds.get("fingerprint")
+    
+    if not sdu_id:
+        sdu_id = input("Please enter your SDU ID: ")
+    if not password:
+        password = getpass.getpass("Please enter your password: ")
+    
+    print(f"[Login] Logging in as {sdu_id}...")
+    
+    result = login_module.login(sdu_id, password, fingerprint)
+    cookies = result.get("cookies", {})
+    
+    if not cookies:
+        print("[Login] Failed!")
+        return False
+    
+    sduwrap.cookies = cookies
+    save_cookies()
+    
+    if fingerprint:
+        save_credentials(sdu_id, password, fingerprint)
+    
+    print("[Login] Success!")
+    return True
+
+
+def check_and_refresh_cookies():
+    if not sduwrap.cookies:
+        print("[Refresh] No cookies, need login")
+        return login()
+    
+    test_content = "ping"
+    try:
+        list(sduwrap.chat(test_content, [], ChatConfig()))
+        print("[Refresh] Cookies valid")
+        return True
+    except Exception as e:
+        print(f"[Refresh] Cookies expired: {e}")
+        return login()
+
+
+def update_stats(prompt_tokens: int, completion_tokens: int):
+    with stats_lock:
+        token_stats["prompt_tokens"] += prompt_tokens
+        token_stats["completion_tokens"] += completion_tokens
+        token_stats["total_tokens"] += prompt_tokens + completion_tokens
+        token_stats["requests"] += 1
+        
+        print(f"\n{'='*60}")
+        print(f"[Stats] Requests: {token_stats['requests']} | "
+              f"Prompt: {token_stats['prompt_tokens']} | "
+              f"Completion: {token_stats['completion_tokens']} | "
+              f"Total: {token_stats['total_tokens']}")
+        print(f"{'='*60}\n", flush=True)
+
+
+def print_stats_summary():
+    with stats_lock:
+        print(f"\n[Stats Summary] "
+              f"Requests: {token_stats['requests']} | "
+              f"Prompt: {token_stats['prompt_tokens']} | "
+              f"Completion: {token_stats['completion_tokens']} | "
+              f"Total: {token_stats['total_tokens']}")
+
+
+if not load_cookies():
+    login()
 
 app = FastAPI(title="SDU DeepSeek API", description="OpenAI-compatible API for SDU DeepSeek")
 
@@ -69,55 +189,6 @@ def get_config_for_model(model: str, thinking_budget: int = 1000) -> ChatConfig:
     config.set_model(internal_model)
     config.thinking_budget = thinking_budget
     return config
-
-
-def sync_chat_producer(content: str, history: list, config: ChatConfig, q: queue.Queue):
-    request_history = []
-    for chat_session in history:
-        cs = sduwrap.ChatSession()
-        cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
-        cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
-        request_history.append(cs)
-    
-    try:
-        for chunk in sduwrap.chat(content, request_history, config):
-            q.put(chunk)
-    except Exception as e:
-        q.put({"error": str(e)})
-    finally:
-        q.put(None)
-
-
-async def chat_stream(content: str, history: list, config: ChatConfig):
-    q = queue.Queue()
-    
-    loop = asyncio.get_event_loop()
-    
-    def run_producer():
-        request_history = []
-        for chat_session in history:
-            cs = sduwrap.ChatSession()
-            cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
-            cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
-            request_history.append(cs)
-        
-        try:
-            for chunk in sduwrap.chat(content, request_history, config):
-                q.put(chunk)
-        except Exception as e:
-            q.put({"error": str(e)})
-        finally:
-            q.put(None)
-    
-    await loop.run_in_executor(executor, run_producer)
-    
-    while True:
-        chunk = await loop.run_in_executor(executor, q.get)
-        if chunk is None:
-            break
-        if "error" in chunk:
-            raise Exception(chunk["error"])
-        yield chunk
 
 
 @app.get("/v1/models")
@@ -168,8 +239,11 @@ async def openai_chat_completion(request: ChatCompletionRequest):
     current_input = last_msg.content if hasattr(last_msg, 'content') else last_msg.get('content')
     history = messages[:-1]
     
+    prompt_tokens = len(str(current_input)) + sum(len(str(m.content if hasattr(m, 'content') else m.get('content', ''))) for m in history)
+    
     if stream:
         async def generate_stream():
+            completion_tokens = 0
             response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
             created = int(time.time())
             
@@ -204,6 +278,7 @@ async def openai_chat_completion(request: ChatCompletionRequest):
                 
                 content = chunk.get("content", "")
                 reasoning = chunk.get("reasoning_content", "")
+                completion_tokens += len(content) + len(reasoning)
                 
                 if reasoning:
                     stream_response = ChatCompletionStreamResponse(
@@ -238,6 +313,8 @@ async def openai_chat_completion(request: ChatCompletionRequest):
                     yield f"data: {stream_response.model_dump_json()}\n\n"
             
             thread.join()
+            
+            update_stats(prompt_tokens, completion_tokens)
             
             final_response = ChatCompletionStreamResponse(
                 id=response_id,
@@ -276,6 +353,9 @@ async def openai_chat_completion(request: ChatCompletionRequest):
             full_content += chunk.get("content", "")
             full_reasoning += chunk.get("reasoning_content", "")
         
+        completion_tokens = len(full_content) + len(full_reasoning)
+        update_stats(prompt_tokens, completion_tokens)
+        
         message = ChatMessage(
             role="assistant",
             content=full_content,
@@ -296,9 +376,9 @@ async def openai_chat_completion(request: ChatCompletionRequest):
                 )
             ],
             usage=UsageInfo(
-                prompt_tokens=len(str(current_input)),
-                completion_tokens=len(full_content) + len(full_reasoning),
-                total_tokens=len(str(current_input)) + len(full_content) + len(full_reasoning),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
             ),
         )
         
@@ -306,4 +386,8 @@ async def openai_chat_completion(request: ChatCompletionRequest):
 
 
 if __name__ == "__main__":
+    print(f"\n{'='*50}")
+    print("SDU DeepSeek API Server")
+    print(f"{'='*50}\n")
+    
     uvicorn.run(app, host="0.0.0.0", port=8000)
