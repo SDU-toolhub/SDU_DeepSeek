@@ -7,10 +7,6 @@ on:
     branches:
       - webapi
       - main
-  pull_request:
-    branches:
-      - webapi
-      - main
   workflow_dispatch:
 
 jobs:
@@ -45,7 +41,6 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     
     steps:
     - name: Download artifact
@@ -53,8 +48,50 @@ jobs:
       with:
         name: SDU_DeepSeek_API
     
+    - name: Get version
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=nightly-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=nightly" >> $GITHUB_OUTPUT
+          echo "PRERELEASE=true" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Delete old nightly release
+      if: contains(steps.version.outputs.TAG_NAME, 'nightly')
+      run: |
+        gh release delete nightly --yes || true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
+        tag_name: ${{ steps.version.outputs.TAG_NAME }}
+        name: SDU DeepSeek API ${{ steps.version.outputs.VERSION }}
+        body: |
+          ## SDU DeepSeek API
+          
+          OpenAI 兼容的山东大学 DeepSeek API 服务。
+          
+          ### 使用方法
+          1. 下载 `SDU_DeepSeek_API.exe`
+          2. 运行程序，首次使用需要输入学号和密码登录
+          3. 程序将在 `http://localhost:8000` 启动服务
+          
+          ### 支持的模型
+          - deepseek-ai/DeepSeek-V3.2
+          - deepseek-ai/DeepSeek-R1
+          - deepseek-ai/DeepSeek-V3
+          - deepseek-ai/DeepSeek-V3.2-think
+          - Qwen/Qwen3-235B-A22B-Instruct
+          - Qwen/Qwen3-235B-A22B-Thinking
         files: SDU_DeepSeek_API.exe
+        prerelease: ${{ steps.version.outputs.PRERELEASE }}
         generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
