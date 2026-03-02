@@ -3,8 +3,11 @@ from uniform_login_des import strEnc
 from datetime import datetime, timezone
 
 
-def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())):
+def login(sduid: str, password: str, fingerprint: str | None = None):
     session = requests.Session()
+    
+    if fingerprint is None:
+        fingerprint = str(uuid.uuid4())
     
     page = session.get(
         "https://pass.sdu.edu.cn/cas/login",
@@ -23,7 +26,8 @@ def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())
             "m": "1",
             "d": fingerprint, "d_s": murmur_s,
             "d_md5": hashlib.md5(murmur_s.encode()).hexdigest(),
-        })
+        }
+    )
     device_status_dict = json.loads(device_status.text)
     match device_status_dict.get("info"):
         case "binded" | "pass":
@@ -38,15 +42,13 @@ def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())
                     "m": "2",
                     "d": fingerprint, "d_s": murmur_s,
                     "d_md5": hashlib.md5(murmur_s.encode()).hexdigest(),
-                })
-            if tmp.text == '{"info":"send"}':
-                print("SMS verification code sent.")
-            else:
-                try:
-                    tmp_json = json.loads(tmp.text)
-                    print(f"SMS status: {tmp_json}")
-                except:
-                    print(f"Warning: SMS send response: {tmp.text[:200]}")
+                }
+            )
+            try:
+                tmp_json = json.loads(tmp.text)
+                print(f"SMS verification code sent.")
+            except:
+                print(f"Warning: SMS send response: {tmp.text[:200]}")
             body = {
                 "d": murmur_s, "i": fingerprint, "m": "3", "u": sduid,
                 "c": input("Verification Code: "), "s": "1" if input(
@@ -82,4 +84,5 @@ def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())
     
     return {
         "cookies": cookies,
-        "expires": datetime.now(timezone.utc)}
+        "expires": datetime.now(timezone.utc)
+    }

@@ -90,6 +90,13 @@ def login(sdu_id: str = None, password: str = None, fingerprint: str = None):
         sdu_id = input("Please enter your SDU ID: ")
     if not password:
         password = getpass.getpass("Please enter your password: ")
+    if not fingerprint:
+        fingerprint_input = input("Enter device fingerprint (press Enter to auto-generate): ").strip()
+        if fingerprint_input:
+            fingerprint = fingerprint_input
+        else:
+            fingerprint = str(uuid.uuid4())
+            print(f"[Login] Generated fingerprint: {fingerprint}")
     
     print(f"[Login] Logging in as {sdu_id}...")
     
@@ -103,8 +110,7 @@ def login(sdu_id: str = None, password: str = None, fingerprint: str = None):
     sduwrap.cookies = cookies
     save_cookies()
     
-    if fingerprint:
-        save_credentials(sdu_id, password, fingerprint)
+    save_credentials(sdu_id, password, fingerprint)
     
     print("[Login] Success!")
     return True
