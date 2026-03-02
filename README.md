@@ -36,17 +36,79 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 
 程序将在 `http://localhost:8000` 上运行。
 
-API路径为 /v1/chat/completions，程序不验证密钥，由于原版网页限制，也无法调整参数，因此请直接使用默认参数。
+## API 接口
 
-支持以下模型，请在调用工具处填写（严格大小写，如果输入不匹配则默认为DeepSeek+深度思考+联网搜索）：
-- deepseek_reasoner_web (DeepSeek+深度思考+联网搜索)
-- deepseek_reasoner (DeepSeek+深度思考)
-- deepseek_web (DeepSeek+联网搜索)
-- deepseek (DeepSeek)
-- QwQ (QwQ)
-- QwQ_web (QwQ+联网搜索)
-- QwQ_reasoner (QwQ+深度思考)
-- QwQ_reasoner_web (QwQ+深度思考+联网搜索)
+本程序提供 OpenAI 兼容的 API 接口：
+
+- `GET /v1/models` - 获取模型列表
+- `GET /v1/models/{model_id}` - 获取模型信息
+- `POST /v1/chat/completions` - 聊天完成接口
+
+## 支持的模型
+
+| 模型 ID | 说明 |
+|---------|------|
+| `deepseek-ai/DeepSeek-V3.2` | DeepSeek V3.2 |
+| `deepseek-ai/DeepSeek-R1` | DeepSeek R1 (深度思考) |
+| `deepseek-ai/DeepSeek-V3` | DeepSeek V3 |
+| `deepseek-ai/DeepSeek-V3.2-think` | DeepSeek V3.2 + 深度思考 |
+| `Qwen/Qwen3-235B-A22B-Instruct` | Qwen3 235B |
+| `Qwen/Qwen3-235B-A22B-Thinking` | Qwen3 235B + 深度思考 |
+
+## 请求示例
+
+### 非流式请求
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-ai/DeepSeek-V3.2",
+    "messages": [{"role": "user", "content": "你好"}],
+    "stream": false
+  }'
+```
+
+### 流式请求
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-ai/DeepSeek-V3.2",
+    "messages": [{"role": "user", "content": "你好"}],
+    "stream": true
+  }'
+```
+
+## 特殊参数
+
+- `thinking_budget`: 思考预算，默认 1000，仅对支持深度思考的模型有效
+
+```json
+{
+  "model": "deepseek-ai/DeepSeek-R1",
+  "messages": [{"role": "user", "content": "请解释量子力学"}],
+  "thinking_budget": 2000,
+  "stream": true
+}
+```
+
+## 推理内容 (Reasoning Content)
+
+对于支持深度思考的模型（如 DeepSeek-R1），响应中会包含 `reasoning_content` 字段：
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "这是回答内容",
+      "reasoning_content": "这是思考过程"
+    }
+  }]
+}
+```
 
 ## 从源码运行
 

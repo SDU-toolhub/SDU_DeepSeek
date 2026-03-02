@@ -1,168 +1,309 @@
-from fastapi import FastAPI
-import sduwrap
-from sduwrap import ChatConfig
-
-from fastapi import Request, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import json
 import uuid
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import queue
+import threading
+import sduwrap
+from sduwrap import ChatConfig
+from fastchat.protocol.openai_api_protocol import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionResponseChoice,
+    ChatCompletionResponseStreamChoice,
+    ChatCompletionStreamResponse,
+    ChatMessage,
+    DeltaMessage,
+    UsageInfo,
+    ModelList,
+    ModelCard,
+)
 
-app = FastAPI()
+try:
+    with open("./cookies.json", "r") as f:
+        sduwrap.cookies = json.load(f)
+        if not sduwrap.cookies:
+            raise FileNotFoundError
+except FileNotFoundError:
+    print("Warning: No cookies.json found. Please login first.")
+
+app = FastAPI(title="SDU DeepSeek API", description="OpenAI-compatible API for SDU DeepSeek")
 
 app.add_middleware(
-     CORSMiddleware,
-     allow_origins=["*"],  # 根据需求调整允许的源
-     allow_credentials=True,
-     allow_methods=["POST", "OPTIONS"],  # 明确允许 OPTIONS 和 POST
-     allow_headers=["*"],  # 允许所有头
- )
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 假设这是用户已有的生成器函数（需自行实现具体逻辑）
-def chat(content: str, history: list, config: ChatConfig) -> str:
+MODEL_MAP = {
+    "deepseek-ai/DeepSeek-V3.2": "DeepSeek-V3.2",
+    "deepseek-ai/DeepSeek-R1": "DeepSeek-R1",
+    "deepseek-ai/DeepSeek-V3": "DeepSeek-V3",
+    "deepseek-ai/DeepSeek-V3.2-think": "DeepSeek-V3.2-think",
+    "Qwen/Qwen3-235B-A22B-Instruct": "Qwen3-235B-A22B-Instruct",
+    "Qwen/Qwen3-235B-A22B-Thinking": "Qwen3-235B-A22B-Thinking",
+}
+
+MODELS_DATA = [
+    {"id": "deepseek-ai/DeepSeek-V3.2", "owned_by": "deepseek-ai"},
+    {"id": "deepseek-ai/DeepSeek-R1", "owned_by": "deepseek-ai"},
+    {"id": "deepseek-ai/DeepSeek-V3", "owned_by": "deepseek-ai"},
+    {"id": "deepseek-ai/DeepSeek-V3.2-think", "owned_by": "deepseek-ai"},
+    {"id": "Qwen/Qwen3-235B-A22B-Instruct", "owned_by": "Qwen"},
+    {"id": "Qwen/Qwen3-235B-A22B-Thinking", "owned_by": "Qwen"},
+]
+
+executor = ThreadPoolExecutor(max_workers=4)
+
+
+def get_config_for_model(model: str, thinking_budget: int = 1000) -> ChatConfig:
+    config = ChatConfig()
+    internal_model = MODEL_MAP.get(model, "DeepSeek-V3.2-think")
+    config.set_model(internal_model)
+    config.thinking_budget = thinking_budget
+    return config
+
+
+def sync_chat_producer(content: str, history: list, config: ChatConfig, q: queue.Queue):
     request_history = []
     for chat_session in history:
         cs = sduwrap.ChatSession()
-        cs.role = chat_session["role"]
-        cs.content = chat_session["content"]
-
+        cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
+        cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
         request_history.append(cs)
+    
+    try:
+        for chunk in sduwrap.chat(content, request_history, config):
+            q.put(chunk)
+    except Exception as e:
+        q.put({"error": str(e)})
+    finally:
+        q.put(None)
 
-    for response in sduwrap.chat(content, request_history, config):
-        yield response
+
+async def chat_stream(content: str, history: list, config: ChatConfig):
+    q = queue.Queue()
+    
+    loop = asyncio.get_event_loop()
+    
+    def run_producer():
+        request_history = []
+        for chat_session in history:
+            cs = sduwrap.ChatSession()
+            cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
+            cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+            request_history.append(cs)
+        
+        try:
+            for chunk in sduwrap.chat(content, request_history, config):
+                q.put(chunk)
+        except Exception as e:
+            q.put({"error": str(e)})
+        finally:
+            q.put(None)
+    
+    await loop.run_in_executor(executor, run_producer)
+    
+    while True:
+        chunk = await loop.run_in_executor(executor, q.get)
+        if chunk is None:
+            break
+        if "error" in chunk:
+            raise Exception(chunk["error"])
+        yield chunk
+
+
+@app.get("/v1/models")
+async def list_models():
+    models = [
+        ModelCard(
+            id=m["id"],
+            object="model",
+            created=1700000000,
+            owned_by=m["owned_by"],
+        )
+        for m in MODELS_DATA
+    ]
+    return ModelList(data=models).model_dump()
+
+
+@app.get("/v1/models/{model_id}")
+async def get_model(model_id: str):
+    for m in MODELS_DATA:
+        if m["id"] == model_id:
+            model = ModelCard(
+                id=m["id"],
+                object="model",
+                created=1700000000,
+                owned_by=m["owned_by"],
+            )
+            return model.model_dump()
+    raise HTTPException(status_code=404, detail={"error": {"message": f"Model {model_id} not found", "type": "invalid_request_error", "code": "model_not_found"}})
 
 
 @app.post("/v1/chat/completions")
-async def openai_chat_completion(request: Request):
-    # 解析请求体
-    try:
-        body = await request.json()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-
-    # 提取必要参数
-    messages = body.get("messages", [])
-    stream = body.get("stream", False)
-    model = body.get("model", "deepseek_reasoner_web")  # 模型名称按需处理
-
-    config = ChatConfig()
-
-    model_config = {
-        "deepseek_reasoner_web": (73, "本科生", 1, 1),
-        "deepseek_reasoner": (73, "本科生", 1, 2),
-        "deepseek_web": (73, "本科生", 2, 1),
-        "deepseek": (73, "本科生", 2, 2),
-        "QwQ": (72, "本科生", 2, 2),
-        "QwQ_web": (72, "本科生", 2, 1),
-        "QwQ_reasoner": (72, "本科生", 1, 2),
-        "QwQ_reasoner_web": (72, "本科生", 1, 1),
-    }
-
-    if model in model_config:
-        config.compose_id, config.auth_tag, config.deep_search, config.internet_search = model_config[model]
-
-    # 校验消息格式
-    if not messages or messages[-1]["role"] != "user":
-        raise HTTPException(status_code=400, detail="Invalid messages format")
-
-    # 提取当前输入和历史记录
-    current_input = messages[-1]["content"]
-    history = messages[:-1]  # 按需调整历史处理逻辑
-
-    # 流式响应处理
+async def openai_chat_completion(request: ChatCompletionRequest):
+    messages = request.messages
+    stream = request.stream
+    model = request.model
+    thinking_budget = getattr(request, 'thinking_budget', 1000) or 1000
+    
+    config = get_config_for_model(model, thinking_budget)
+    
+    if not messages:
+        raise HTTPException(status_code=400, detail={"error": {"message": "Invalid messages format", "type": "invalid_request_error", "code": "invalid_messages"}})
+    
+    last_msg = messages[-1]
+    last_role = last_msg.role if hasattr(last_msg, 'role') else last_msg.get('role')
+    if last_role != "user":
+        raise HTTPException(status_code=400, detail={"error": {"message": "Invalid messages format", "type": "invalid_request_error", "code": "invalid_messages"}})
+    
+    current_input = last_msg.content if hasattr(last_msg, 'content') else last_msg.get('content')
+    history = messages[:-1]
+    
     if stream:
-        def generate_stream():
-            # 生成唯一响应ID
-            response_id = f"sdu_ds-{uuid.uuid4()}"
+        async def generate_stream():
+            response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
             created = int(time.time())
-
-            # 遍历生成器生成事件流
-            for chunk in chat(current_input, history, config):
-                event_data = {
-                    "id": response_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"content": chunk},
-                        "finish_reason": None
-                    }]
-                }
-                yield f"data: {json.dumps(event_data)}\n\n"
-
-            # 结束事件
+            
+            q = queue.Queue()
+            loop = asyncio.get_event_loop()
+            
+            request_history = []
+            for chat_session in history:
+                cs = sduwrap.ChatSession()
+                cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
+                cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+                request_history.append(cs)
+            
+            def run_chat():
+                try:
+                    for chunk in sduwrap.chat(current_input, request_history, config):
+                        q.put(chunk)
+                except Exception as e:
+                    q.put({"error": str(e)})
+                finally:
+                    q.put(None)
+            
+            thread = threading.Thread(target=run_chat)
+            thread.start()
+            
+            while True:
+                chunk = await loop.run_in_executor(executor, q.get)
+                if chunk is None:
+                    break
+                if "error" in chunk:
+                    break
+                
+                content = chunk.get("content", "")
+                reasoning = chunk.get("reasoning_content", "")
+                
+                if reasoning:
+                    stream_response = ChatCompletionStreamResponse(
+                        id=response_id,
+                        object="chat.completion.chunk",
+                        created=created,
+                        model=model,
+                        choices=[
+                            ChatCompletionResponseStreamChoice(
+                                index=0,
+                                delta=DeltaMessage(reasoning_content=reasoning),
+                                finish_reason=None,
+                            )
+                        ],
+                    )
+                    yield f"data: {stream_response.model_dump_json()}\n\n"
+                
+                if content:
+                    stream_response = ChatCompletionStreamResponse(
+                        id=response_id,
+                        object="chat.completion.chunk",
+                        created=created,
+                        model=model,
+                        choices=[
+                            ChatCompletionResponseStreamChoice(
+                                index=0,
+                                delta=DeltaMessage(content=content),
+                                finish_reason=None,
+                            )
+                        ],
+                    )
+                    yield f"data: {stream_response.model_dump_json()}\n\n"
+            
+            thread.join()
+            
+            final_response = ChatCompletionStreamResponse(
+                id=response_id,
+                object="chat.completion.chunk",
+                created=created,
+                model=model,
+                choices=[
+                    ChatCompletionResponseStreamChoice(
+                        index=0,
+                        delta=DeltaMessage(),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+            yield f"data: {final_response.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"
-
+        
         return StreamingResponse(
             generate_stream(),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
-
-    # 非流式响应处理
+    
     else:
-        # 收集完整响应
-        full_response = "".join([
-            chunk for chunk in chat(current_input, history, config)
-        ])
-
-        return {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": full_response
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {  # 按需实现实际token计算
-                "prompt_tokens": len(current_input),
-                "completion_tokens": len(full_response),
-                "total_tokens": len(current_input) + len(full_response)
-            }
-        }
+        full_content = ""
+        full_reasoning = ""
+        
+        request_history = []
+        for chat_session in history:
+            cs = sduwrap.ChatSession()
+            cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
+            cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+            request_history.append(cs)
+        
+        for chunk in sduwrap.chat(current_input, request_history, config):
+            full_content += chunk.get("content", "")
+            full_reasoning += chunk.get("reasoning_content", "")
+        
+        message = ChatMessage(
+            role="assistant",
+            content=full_content,
+        )
+        if full_reasoning:
+            message.reasoning_content = full_reasoning
+        
+        response = ChatCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4().hex[:24]}",
+            object="chat.completion",
+            created=int(time.time()),
+            model=model,
+            choices=[
+                ChatCompletionResponseChoice(
+                    index=0,
+                    message=message,
+                    finish_reason="stop",
+                )
+            ],
+            usage=UsageInfo(
+                prompt_tokens=len(str(current_input)),
+                completion_tokens=len(full_content) + len(full_reasoning),
+                total_tokens=len(str(current_input)) + len(full_content) + len(full_reasoning),
+            ),
+        )
+        
+        return response.model_dump()
 
 
 if __name__ == "__main__":
-    # 判断 ./cookies.json 是否存在
-    try:
-        with open("./cookies.json", "r") as f:
-            sduwrap.cookies = json.load(f)
-            if not sduwrap.cookies:
-                raise FileNotFoundError
-    except FileNotFoundError:
-        import sdu_aiassist_login as login
-        import getpass
-        print("There is no cookies.json file, logging in...")
-        sdu_id = input("Please enter your SDU ID: ")
-        password = getpass.getpass("Please enter your password: ")
-        # fingerprint = input("Please enter your fingerprint(Any String For Generate Random UUID): ")
-        # try read fingerprint from file
-        try:
-            with open("./fingerprint.txt", "r") as f:
-                fingerprint = f.read().strip()
-        except FileNotFoundError:
-            # generate random uuid
-            fingerprint = input("Please enter your fingerprint(Empty to generate one): ")
-            if not fingerprint:
-                fingerprint = str(uuid.uuid4())
-            with open("./fingerprint.txt", "w") as f:
-                f.write(fingerprint)
-        fingerprint = str(uuid.uuid5(uuid.NAMESPACE_URL, fingerprint))
-
-        cookies = login.login(sdu_id, password, fingerprint)["cookies"]
-        if not cookies:
-            raise Exception("Login failed")
-
-        sduwrap.cookies = cookies
-
-        with open("./cookies.json", "w") as f:
-            json.dump(cookies, f)
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
