@@ -4,11 +4,7 @@ from datetime import datetime, timezone
 
 
 def login(sduid: str, password: str, fingerprint: str | None = None):
-def login(sduid: str, password: str, fingerprint: str | None = None):
     session = requests.Session()
-    
-    if fingerprint is None:
-        fingerprint = str(uuid.uuid4())
     
     if fingerprint is None:
         fingerprint = str(uuid.uuid4())
@@ -30,8 +26,6 @@ def login(sduid: str, password: str, fingerprint: str | None = None):
             "m": "1",
             "d": fingerprint, "d_s": murmur_s,
             "d_md5": hashlib.md5(murmur_s.encode()).hexdigest(),
-        }
-    )
         }
     )
     device_status_dict = json.loads(device_status.text)
@@ -59,12 +53,11 @@ def login(sduid: str, password: str, fingerprint: str | None = None):
                 "d": murmur_s, "i": fingerprint, "m": "3", "u": sduid,
                 "c": input("Verification Code: "), "s": "1" if input(
                     "Remember this device? (y/N)：") == "y" else "0"}
-            }
             k = session.post("https://pass.sdu.edu.cn/cas/device",
                            data=body)
             while k.text == '{"info":"codeErr"}':
-                body[c] = input("Wrong, please retry: ")
-            k = session.post("https://pass.sdu.edu.cn/cas/device",
+                body["c"] = input("Wrong, please retry: ")
+                k = session.post("https://pass.sdu.edu.cn/cas/device",
                                data=body)
             if k.text == '{"info":"ok"}':
                 print("Login successful.")
@@ -91,7 +84,5 @@ def login(sduid: str, password: str, fingerprint: str | None = None):
     
     return {
         "cookies": cookies,
-        "expires": datetime.now(timezone.utc)
-    }
         "expires": datetime.now(timezone.utc)
     }
