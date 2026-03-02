@@ -65,10 +65,12 @@ def login(sduid: str, password: str, fingerprint: str | None = None):
                     print(
                         f"For device fingerprint: {fingerprint}, the next login will no longer require a verification code")
             else:
-                print(
-                    "Please check your username. Device information cannot be loaded by SDU pass.")
+                print(f"Device verification response: {k.text}")
                 raise SystemError(
-                    "Unknown device status: {}".format(str(device_status_dict)))
+                    "Device verification failed: {}".format(k.text))
+        case _:
+            raise SystemError(
+                "Unknown device status: {}".format(str(device_status_dict)))
     
     page = session.post(
         "https://pass.sdu.edu.cn/cas/login",
