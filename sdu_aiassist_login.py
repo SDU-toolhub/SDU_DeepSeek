@@ -3,8 +3,11 @@ from uniform_login_des import strEnc
 from datetime import datetime, timezone
 
 
-def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())):
+def login(sduid: str, password: str, fingerprint: str | None = None):
     session = requests.Session()
+    
+    if fingerprint is None:
+        fingerprint = str(uuid.uuid4())
     
     page = session.get(
         "https://pass.sdu.edu.cn/cas/login",
@@ -23,50 +26,50 @@ def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())
             "m": "1",
             "d": fingerprint, "d_s": murmur_s,
             "d_md5": hashlib.md5(murmur_s.encode()).hexdigest(),
-        })
+        }
+    )
     device_status_dict = json.loads(device_status.text)
     match device_status_dict.get("info"):
         case "binded" | "pass":
             pass
         case "bind":
             print("2FA:" + device_status_dict.get("m"))
-            tmp = session.post(
-                "https://pass.sdu.edu.cn/cas/device",
-                data={
-                    "u": strEnc(sduid, "1", "2", "3"),
-                    "p": strEnc(password, "1", "2", "3"),
-                    "m": "2",
-                    "d": fingerprint, "d_s": murmur_s,
-                    "d_md5": hashlib.md5(murmur_s.encode()).hexdigest(),
-                })
-            if tmp.text == '{"info":"send"}':
-                print("SMS verification code sent.")
-            else:
-                try:
-                    tmp_json = json.loads(tmp.text)
-                    print(f"SMS status: {tmp_json}")
-                except:
-                    print(f"Warning: SMS send response: {tmp.text[:200]}")
+        tmp = session.post(
+            "https://pass.sdu.edu.cn/cas/device",
+            data={
+                "u": strEnc(sduid, "1", "2", "3"),
+                "p": strEnc(password, "1", "2", "3"),
+                "m": "2",
+                "d": fingerprint, "d_s": murmur_s,
+                "d_md5": hashlib.md5(murmur_s.encode()).hexdigest(),
+            }
+        )
+        try:
+            tmp_json = json.loads(tmp.text)
+            print(f"SMS verification code sent.")
+        except:
+            print(f"Warning: SMS send response: {tmp.text[:200]}")
             body = {
                 "d": murmur_s, "i": fingerprint, "m": "3", "u": sduid,
                 "c": input("Verification Code: "), "s": "1" if input(
                     "Remember this device? (y/N)：") == "y" else "0"}
+            }
             k = session.post("https://pass.sdu.edu.cn/cas/device",
                            data=body)
             while k.text == '{"info":"codeErr"}':
-                body["c"] = input("Wrong, please retry: ")
-                k = session.post("https://pass.sdu.edu.cn/cas/device",
+                body[c] = input("Wrong, please retry: ")
+            k = session.post("https://pass.sdu.edu.cn/cas/device",
                                data=body)
             if k.text == '{"info":"ok"}':
                 print("Login successful.")
                 if body["s"] == "1":
                     print(
                         f"For device fingerprint: {fingerprint}, the next login will no longer require a verification code")
-        case _:
-            print(
-                "Please check your username. Device information cannot be loaded by SDU pass.")
-            raise SystemError(
-                "Unknown device status: {}".format(str(device_status_dict)))
+            else:
+                print(
+                    "Please check your username. Device information cannot be loaded by SDU pass.")
+                raise SystemError(
+                    "Unknown device status: {}".format(str(device_status_dict)))
     
     page = session.post(
         "https://pass.sdu.edu.cn/cas/login",
@@ -82,4 +85,5 @@ def login(sduid: str, password: str, fingerprint: str | None = str(uuid.uuid4())
     
     return {
         "cookies": cookies,
-        "expires": datetime.now(timezone.utc)}
+        "expires": datetime.now(timezone.utc)
+    }
