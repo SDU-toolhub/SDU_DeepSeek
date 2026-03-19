@@ -41,21 +41,30 @@ class ChatConfig:
 
 def history_to_form_data(history):
     form_data = {}
-    offset = 0
+    idx = 0
 
-    for i, chat_session in enumerate(history):
+    for chat_session in history:
         if chat_session.role == "system":
-            form_data[f"history[{i + offset}][role]"] = "user"
-            form_data[f"history[{i + offset}][content]"] = chat_session.content
-
-            offset += 1
-            form_data[f"history[{i + offset}][role]"] = "assistant"
-            form_data[f"history[{i + offset}][content]"] = "我知道了"
-
-            continue
-
-        form_data[f"history[{i+offset}][role]"] = chat_session.role
-        form_data[f"history[{i+offset}][content]"] = chat_session.content
+            form_data[f"history[{idx}][role]"] = "user"
+            form_data[f"history[{idx}][content]"] = chat_session.content
+            idx += 1
+            form_data[f"history[{idx}][role]"] = "assistant"
+            form_data[f"history[{idx}][content]"] = "我知道了"
+            idx += 1
+        elif chat_session.role == "user":
+            form_data[f"history[{idx}][role]"] = "user"
+            form_data[f"history[{idx}][content]"] = chat_session.content
+            idx += 1
+            form_data[f"history[{idx}][role]"] = "assistant"
+            form_data[f"history[{idx}][content]"] = ""
+            idx += 1
+        elif chat_session.role == "assistant":
+            if idx > 0 and form_data.get(f"history[{idx-1}][role]") == "assistant":
+                form_data[f"history[{idx-1}][content]"] = chat_session.content
+            else:
+                form_data[f"history[{idx}][role]"] = "assistant"
+                form_data[f"history[{idx}][content]"] = chat_session.content
+                idx += 1
 
     return form_data
 
@@ -87,7 +96,7 @@ class ChatStream:
         
         while True:
             if not self.in_think:
-                think_start = self.buffer.find('<think\>')
+                think_start = self.buffer.find('<think\\>')
                 if think_start != -1:
                     content += self.buffer[:think_start]
                     self.buffer = self.buffer[think_start + 8:]
@@ -96,7 +105,7 @@ class ChatStream:
                     safe_pos = len(self.buffer)
                     for i in range(len(self.buffer)):
                         if self.buffer[i] == '<' and i + 7 <= len(self.buffer):
-                            if self.buffer[i:i+7] == '<think\>':
+                            if self.buffer[i:i+7] == '<think\\>':
                                 safe_pos = i
                                 break
                     if safe_pos > 0:
@@ -104,7 +113,7 @@ class ChatStream:
                         self.buffer = self.buffer[safe_pos:]
                     break
             else:
-                think_end = self.buffer.find('</think\>')
+                think_end = self.buffer.find('</think\\>')
                 if think_end != -1:
                     reasoning_content += self.buffer[:think_end]
                     self.buffer = self.buffer[think_end + 9:]
@@ -113,7 +122,7 @@ class ChatStream:
                     safe_pos = len(self.buffer)
                     for i in range(len(self.buffer)):
                         if self.buffer[i] == '<' and i + 9 <= len(self.buffer):
-                            if self.buffer[i:i+9] == '</think\>':
+                            if self.buffer[i:i+9] == '</think\\>':
                                 safe_pos = i
                                 break
                     if safe_pos > 0:
@@ -139,6 +148,12 @@ class ChatStream:
 def chat(content, history, config):
     form_data = make_chat_request(content, history, config)
     response = requests.post(url, data=form_data, cookies=cookies, stream=True)
+    
+    if response.status_code != 200:
+        print(f"[SDU API] Error: HTTP {response.status_code}")
+        print(f"[SDU API] Response: {response.text[:500]}")
+        yield {"content": f"API Error: HTTP {response.status_code}", "reasoning_content": ""}
+        return
     
     stream = ChatStream()
     

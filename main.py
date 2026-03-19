@@ -189,6 +189,18 @@ MODELS_DATA = [
 executor = ThreadPoolExecutor(max_workers=4)
 
 
+def parse_content(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+        return "".join(text_parts)
+    return str(content)
+
+
 def get_config_for_model(model: str, thinking_budget: int = 1000) -> ChatConfig:
     config = ChatConfig()
     internal_model = MODEL_MAP.get(model, "DeepSeek-V3.2-think")
@@ -242,10 +254,12 @@ async def openai_chat_completion(request: ChatCompletionRequest):
     if last_role != "user":
         raise HTTPException(status_code=400, detail={"error": {"message": "Invalid messages format", "type": "invalid_request_error", "code": "invalid_messages"}})
     
-    current_input = last_msg.content if hasattr(last_msg, 'content') else last_msg.get('content')
+    raw_content = last_msg.content if hasattr(last_msg, 'content') else last_msg.get('content')
+    current_input = parse_content(raw_content)
+    
     history = messages[:-1]
     
-    prompt_tokens = len(str(current_input)) + sum(len(str(m.content if hasattr(m, 'content') else m.get('content', ''))) for m in history)
+    prompt_tokens = len(str(current_input)) + sum(len(parse_content(m.content if hasattr(m, 'content') else m.get('content'))) for m in history)
     
     if stream:
         async def generate_stream():
@@ -260,7 +274,8 @@ async def openai_chat_completion(request: ChatCompletionRequest):
             for chat_session in history:
                 cs = sduwrap.ChatSession()
                 cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
-                cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+                raw_hist_content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+                cs.content = parse_content(raw_hist_content)
                 request_history.append(cs)
             
             def run_chat():
@@ -352,7 +367,8 @@ async def openai_chat_completion(request: ChatCompletionRequest):
         for chat_session in history:
             cs = sduwrap.ChatSession()
             cs.role = chat_session.role if hasattr(chat_session, 'role') else chat_session.get('role')
-            cs.content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+            raw_hist_content = chat_session.content if hasattr(chat_session, 'content') else chat_session.get('content')
+            cs.content = parse_content(raw_hist_content)
             request_history.append(cs)
         
         for chunk in sduwrap.chat(current_input, request_history, config):
