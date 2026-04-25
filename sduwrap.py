@@ -8,6 +8,10 @@ cookies = {}
 url = "https://aiassist.sdu.edu.cn/site/ai/compose_chat"
 
 MODEL_CONFIG = {
+    "MiniMax-M2.5": {"compose_id": 239},
+    "Doubao-Seed-2.0-pro": {"compose_id": 237},
+    "GLM5.0": {"compose_id": 236},
+    "DeepSeek-V4": {"compose_id": 73},
     "DeepSeek-V3.2-think": {"compose_id": 73},
     "DeepSeek-V3.2": {"compose_id": 73},
     "DeepSeek-R1": {"compose_id": 73},
@@ -65,6 +69,14 @@ def history_to_form_data(history):
                 form_data[f"history[{idx}][role]"] = "assistant"
                 form_data[f"history[{idx}][content]"] = chat_session.content
                 idx += 1
+        elif getattr(chat_session, "role", None) == "tool":
+            # 将 tool 结果包装为 user 消息
+            form_data[f"history[{idx}][role]"] = "user"
+            form_data[f"history[{idx}][content]"] = f"[Tool Result] {chat_session.content}"
+            idx += 1
+            form_data[f"history[{idx}][role]"] = "assistant"
+            form_data[f"history[{idx}][content]"] = ""
+            idx += 1
 
     return form_data
 
@@ -156,11 +168,14 @@ def chat(content, history, config):
         return
     
     stream = ChatStream()
+    has_sse_data = False
+    non_sse_lines = []
     
     for line in response.iter_lines():
         if line:
             text = line.decode('utf-8')
             if text.startswith('data: '):
+                has_sse_data = True
                 text = text[6:]
                 try:
                     json_data = json.loads(text)
@@ -174,6 +189,8 @@ def chat(content, history, config):
                             }
                 except json.JSONDecodeError:
                     pass
+            else:
+                non_sse_lines.append(text)
     
     c, r = stream.finalize()
     if c or r:
@@ -181,6 +198,20 @@ def chat(content, history, config):
             "content": c,
             "reasoning_content": r
         }
+    
+    # 如果没有解析到任何 SSE 数据，可能是后端返回了普通 JSON 错误
+    if not has_sse_data and non_sse_lines:
+        combined = "\n".join(non_sse_lines)
+        try:
+            json_data = json.loads(combined)
+            if "m" in json_data:
+                yield {"content": f"[后端错误] {json_data['m']}", "reasoning_content": ""}
+            elif "e" in json_data:
+                yield {"content": f"[后端错误 code={json_data['e']}] {json_data.get('m', '未知错误')}", "reasoning_content": ""}
+            else:
+                yield {"content": f"[后端返回非预期格式] {combined[:200]}", "reasoning_content": ""}
+        except json.JSONDecodeError:
+            yield {"content": f"[后端返回非预期格式] {combined[:200]}", "reasoning_content": ""}
 
 
 if __name__ == "__main__":
